@@ -58,7 +58,7 @@ jobs:
           private-key: ${{ secrets.VERSIONS_APP_PRIVATE_KEY }}
 
   deploy-demo:
-    name: Deploy demo (auto after staging)
+    name: Deploy demo
     needs: [build, deploy-staging]
     runs-on: ubuntu-latest
     environment: demo
