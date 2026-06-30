@@ -1,0 +1,56 @@
+name: Deploy unstable
+
+# Engineer-triggered deploy of a PR branch to the unstable environment.
+# Trigger via the "Run workflow" button (workflow_dispatch) and pick the PR
+# branch from the ref dropdown. The PR also gets a sticky comment linking here
+# (see pr-deploy-hint.yml).
+#
+# This updates `version` in example-app/unstable/versions.yaml. The `ref` field
+# there stays `review` (the unstable env tracks whatever is under review).
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: Why deploy this branch to unstable?
+        required: false
+        default: testing PR changes
+
+concurrency:
+  group: deploy-unstable
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build image (mock)
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: |
+          echo "version=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Deploying ${GITHUB_REF_NAME} @ ${GITHUB_SHA} to unstable"
+          echo "reason: ${{ inputs.reason }}"
+          echo "::group::Build image (mock)"
+          echo "+ docker build -t registry.internal/example-app:${GITHUB_SHA} ."
+          echo "+ docker push registry.internal/example-app:${GITHUB_SHA}"
+          echo "::endgroup::"
+
+  deploy-unstable:
+    name: Deploy unstable
+    needs: build
+    runs-on: ubuntu-latest
+    environment: unstable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/argocd-deploy
+        with:
+          environment: unstable
+          image-version: ${{ needs.build.outputs.version }}
+          app-id: ${{ secrets.VERSIONS_APP_ID }}
+          private-key: ${{ secrets.VERSIONS_APP_PRIVATE_KEY }}

@@ -1,0 +1,89 @@
+name: ArgoCD deploy (mock)
+description: >-
+  Mint a GitHub App token, update the image version in the test-GHA-versions
+  repo for a given environment, commit/push it, then run a mocked ArgoCD sync.
+
+inputs:
+  environment:
+    description: Target environment folder under example-app/ (unstable|staging|demo|production)
+    required: true
+  image-version:
+    description: Image version / commit SHA to write into versions.yaml
+    required: true
+  app-id:
+    description: GitHub App ID (composite actions cannot read secrets directly, so pass it in)
+    required: true
+  private-key:
+    description: GitHub App private key (.pem contents)
+    required: true
+  versions-repo:
+    description: owner/repo of the ArgoCD versions repo
+    required: false
+    default: minedetector/test-GHA-versions
+
+runs:
+  using: composite
+  steps:
+    - name: Mint GitHub App token
+      uses: actions/create-github-app-token@v1
+      id: app-token
+      with:
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.private-key }}
+        owner: ${{ github.repository_owner }}
+        repositories: ${{ split(inputs.versions-repo, '/')[1] }}
+
+    - name: Checkout versions repo
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.versions-repo }}
+        token: ${{ steps.app-token.outputs.token }}
+        path: versions-repo
+
+    - name: Update version in versions.yaml
+      shell: bash
+      env:
+        VERSION: ${{ inputs.image-version }}
+        ENV: ${{ inputs.environment }}
+      run: |
+        set -euo pipefail
+        file="versions-repo/example-app/${ENV}/versions.yaml"
+        if [[ ! -f "$file" ]]; then
+          echo "::error::Expected ${file} in versions repo, not found"
+          exit 1
+        fi
+        echo "Updating ${file} -> version=${VERSION}"
+        yq -i '.version = strenv(VERSION)' "$file"
+        echo "::group::${file} after update"
+        cat "$file"
+        echo "::endgroup::"
+
+    - name: Commit and push version bump
+      shell: bash
+      working-directory: versions-repo
+      env:
+        VERSION: ${{ inputs.image-version }}
+        ENV: ${{ inputs.environment }}
+      run: |
+        set -euo pipefail
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        if git diff --quiet -- "example-app/${ENV}/versions.yaml"; then
+          echo "No version change for ${ENV}; nothing to commit."
+          exit 0
+        fi
+        git add "example-app/${ENV}/versions.yaml"
+        git commit -m "chore(${ENV}): bump image version to ${VERSION}"
+        git push
+        echo "Pushed version bump for ${ENV} to ${{ inputs.versions-repo }}"
+
+    - name: ArgoCD sync (mock)
+      shell: bash
+      env:
+        ENV: ${{ inputs.environment }}
+      run: |
+        echo "::group::ArgoCD sync (mock) for example-app-${ENV}"
+        echo "+ argocd app sync example-app-${ENV}"
+        echo "+ argocd app wait example-app-${ENV} --health --sync --timeout 300"
+        echo "example-app-${ENV}: Synced / Healthy (mock)"
+        echo "::endgroup::"

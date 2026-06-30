@@ -1,0 +1,96 @@
+name: Deploy (main)
+
+# Merge to main -> build -> test -> staging -> demo (auto) -> [manual] production.
+# Each environment is its own job so it can be re-run individually from the
+# Actions UI (Re-run failed jobs / Re-run this job).
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build image (mock)
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: |
+          echo "version=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "::group::Build image (mock)"
+          echo "+ docker build -t registry.internal/example-app:${GITHUB_SHA} ."
+          echo "+ docker push registry.internal/example-app:${GITHUB_SHA}"
+          echo "built example-app:${GITHUB_SHA} (mock)"
+          echo "::endgroup::"
+
+  test:
+    name: Run tests (mock)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::group::Run tests (mock)"
+          echo "+ make test"
+          echo "all tests passed (mock)"
+          echo "::endgroup::"
+
+  deploy-staging:
+    name: Deploy staging
+    needs: [build, test]
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/argocd-deploy
+        with:
+          environment: staging
+          image-version: ${{ needs.build.outputs.version }}
+          app-id: ${{ secrets.VERSIONS_APP_ID }}
+          private-key: ${{ secrets.VERSIONS_APP_PRIVATE_KEY }}
+
+  deploy-demo:
+    name: Deploy demo (auto after staging)
+    needs: [build, deploy-staging]
+    runs-on: ubuntu-latest
+    environment: demo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/argocd-deploy
+        with:
+          environment: demo
+          image-version: ${{ needs.build.outputs.version }}
+          app-id: ${{ secrets.VERSIONS_APP_ID }}
+          private-key: ${{ secrets.VERSIONS_APP_PRIVATE_KEY }}
+
+  deploy-production:
+    name: Deploy production (manual approval)
+    needs: [build, deploy-demo]
+    runs-on: ubuntu-latest
+    # 'production' environment must have Required reviewers configured in repo
+    # Settings -> Environments. GitHub pauses the run here until approved.
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Promote image to production registry (mock)
+        run: |
+          echo "::group::Promote image to production registry (mock)"
+          echo "+ docker pull  registry.internal/example-app:${{ needs.build.outputs.version }}"
+          echo "+ docker tag   registry.internal/example-app:${{ needs.build.outputs.version }} registry.prod/example-app:${{ needs.build.outputs.version }}"
+          echo "+ docker push  registry.prod/example-app:${{ needs.build.outputs.version }}"
+          echo "promoted example-app:${{ needs.build.outputs.version }} to prod registry (mock)"
+          echo "::endgroup::"
+      - uses: ./.github/actions/argocd-deploy
+        with:
+          environment: production
+          image-version: ${{ needs.build.outputs.version }}
+          app-id: ${{ secrets.VERSIONS_APP_ID }}
+          private-key: ${{ secrets.VERSIONS_APP_PRIVATE_KEY }}
