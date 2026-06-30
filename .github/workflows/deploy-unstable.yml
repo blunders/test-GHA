@@ -36,7 +36,7 @@ jobs:
           echo "version=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
           echo "Deploying ${GITHUB_REF_NAME} @ ${GITHUB_SHA} to unstable"
           echo "reason: ${{ inputs.reason }}"
-          echo "::group::Build image (mock)"
+          echo "::group::Build image (mocked)"
           echo "+ docker build -t registry.internal/example-app:${GITHUB_SHA} ."
           echo "+ docker push registry.internal/example-app:${GITHUB_SHA}"
           echo "::endgroup::"
