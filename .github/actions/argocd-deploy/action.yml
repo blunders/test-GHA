@@ -16,10 +16,12 @@ inputs:
   private-key:
     description: GitHub App private key (.pem contents)
     required: true
-  versions-repo:
-    description: owner/repo of the ArgoCD versions repo
+  versions-repo-name:
+    description: >-
+      Name (NO owner) of the ArgoCD versions repo. Assumed to live under the
+      same owner as this repo (github.repository_owner).
     required: false
-    default: minedetector/test-GHA-versions
+    default: test-GHA-versions
 
 runs:
   using: composite
@@ -31,12 +33,12 @@ runs:
         app-id: ${{ inputs.app-id }}
         private-key: ${{ inputs.private-key }}
         owner: ${{ github.repository_owner }}
-        repositories: ${{ split(inputs.versions-repo, '/')[1] }}
+        repositories: ${{ inputs.versions-repo-name }}
 
     - name: Checkout versions repo
       uses: actions/checkout@v4
       with:
-        repository: ${{ inputs.versions-repo }}
+        repository: ${{ github.repository_owner }}/${{ inputs.versions-repo-name }}
         token: ${{ steps.app-token.outputs.token }}
         path: versions-repo
 
@@ -75,7 +77,7 @@ runs:
         git add "example-app/${ENV}/versions.yaml"
         git commit -m "chore(${ENV}): bump image version to ${VERSION}"
         git push
-        echo "Pushed version bump for ${ENV} to ${{ inputs.versions-repo }}"
+        echo "Pushed version bump for ${ENV} to ${{ github.repository_owner }}/${{ inputs.versions-repo-name }}"
 
     - name: ArgoCD sync (mock)
       shell: bash
