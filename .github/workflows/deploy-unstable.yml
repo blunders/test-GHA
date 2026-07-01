@@ -22,6 +22,7 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   build:
@@ -54,3 +55,60 @@ jobs:
           image-version: ${{ needs.build.outputs.version }}
           app-id: ${{ secrets.VERSIONS_APP_ID }}
           private-key: ${{ secrets.VERSIONS_APP_PRIVATE_KEY }}
+
+      - name: Write deploy summary
+        env:
+          BRANCH: ${{ github.ref_name }}
+          SHA: ${{ needs.build.outputs.version }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          {
+            echo "### 🚀 Deployed to unstable"
+            echo ""
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| branch | \`${BRANCH}\` |"
+            echo "| commit | \`${SHA}\` |"
+            echo "| versions file | [example-app/unstable/versions.yaml](${GITHUB_SERVER_URL}/${OWNER}/test-GHA-versions/blob/main/example-app/unstable/versions.yaml) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report deploy status on the PR
+        uses: actions/github-script@v7
+        env:
+          SHA: ${{ needs.build.outputs.version }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const branch = context.ref.replace('refs/heads/', '');
+            const sha = process.env.SHA;
+            const short = sha.slice(0, 7);
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const versionsUrl = `${context.serverUrl}/${owner}/test-GHA-versions/blob/main/example-app/unstable/versions.yaml`;
+
+            const { data: prs } = await github.rest.pulls.list({
+              owner, repo, state: 'open', head: `${owner}:${branch}`,
+            });
+            if (prs.length === 0) {
+              core.info(`No open PR for branch ${branch}; deploy summary only.`);
+              return;
+            }
+
+            const marker = '<!-- unstable-deploy-status -->';
+            const body = [
+              marker,
+              '### ✅ Deployed to **unstable**',
+              '',
+              `\`${branch}@${short}\` — [workflow run](${runUrl}) · [unstable/versions.yaml](${versionsUrl})`,
+            ].join('\n');
+
+            for (const pr of prs) {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner, repo, issue_number: pr.number, per_page: 100,
+              });
+              const existing = comments.find(c => c.body && c.body.includes(marker));
+              if (existing) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number: pr.number, body });
+              }
+            }
