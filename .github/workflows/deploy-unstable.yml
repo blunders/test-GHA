@@ -7,6 +7,11 @@ name: Deploy unstable
 #
 # This updates `version` in example-app/unstable/versions.yaml. The `ref` field
 # there stays `review` (the unstable env tracks whatever is under review).
+#
+# After deploy, the hold-for-testing job waits on the `unstable-testing`
+# environment (required reviewers). The run — and the concurrency lock — stays
+# claimed while it waits, so nobody else can deploy to unstable until a reviewer
+# approves via "Review deployments".
 
 on:
   workflow_dispatch:
@@ -18,7 +23,7 @@ on:
 
 concurrency:
   group: deploy-unstable
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -112,3 +117,17 @@ jobs:
                 await github.rest.issues.createComment({ owner, repo, issue_number: pr.number, body });
               }
             }
+
+  # Hold the unstable environment (and therefore the concurrency lock) until the
+  # engineer approves the `unstable-testing` environment deployment. The job sits
+  # in "Waiting" at the environment gate; the run stays in progress, so the
+  # deploy-unstable concurrency group stays claimed and nobody else can deploy to
+  # unstable. Approving via "Review deployments" releases it.
+  hold-for-testing:
+    name: Hold unstable (await test sign-off)
+    needs: [deploy-unstable]
+    runs-on: ubuntu-latest
+    environment: unstable-test
+    steps:
+      - name: Sign-off received
+        run: echo "unstable-testing approved — releasing the unstable lock."
